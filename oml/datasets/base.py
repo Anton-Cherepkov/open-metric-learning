@@ -187,13 +187,16 @@ class BaseDataset(Dataset):
             if mask is None:
                 image_tensor = self.transform(img)
             else:
-                bef = mask_tensor.shape
-                image_tensor, mask_tensor = self.transform(img, mask_tensor)
+                shape_of_image_before_aug = img.size
+                shape_of_mask_before_aug = mask_tensor.shape
+
+                image_tensor, mask_tensor = self.transform(img, mask_tensor.T)
+                mask_tensor = mask_tensor.T
                 # assert mask_tensor.ndim == 2
                 # assert image_tensor.shape[1:] == mask_tensor.shape
                 # image_tensor = torch.cat((image_tensor, mask_tensor.unsqueeze(0)), dim=0)
 
-                print("before", bef, "after", mask_tensor.shape)
+                print(f"image: before {shape_of_image_before_aug}, after {image_tensor.shape} | mask: before {shape_of_mask_before_aug}, after {mask_tensor.shape}")
                 5/0
 
         item = {
