@@ -6,6 +6,7 @@ import albumentations as albu
 import numpy as np
 import pandas as pd
 import torchvision
+from torchvision.tv_tensors import Mask
 from torch.utils.data import Dataset
 
 from oml.const import (
@@ -53,6 +54,7 @@ class BaseDataset(Dataset):
         transform: Optional[TTransforms] = None,
         dataset_root: Optional[Union[str, Path]] = None,
         f_imread: Optional[TImReader] = None,
+        use_masks: Optional[bool] = False,
         cache_size: Optional[int] = 0,
         input_tensors_key: str = INPUT_TENSORS_KEY,
         labels_key: str = LABELS_KEY,
@@ -109,6 +111,7 @@ class BaseDataset(Dataset):
         self.categories_key = categories_key if (CATEGORIES_COLUMN in df.columns) else None
         self.sequence_key = sequence_key if (SEQUENCE_COLUMN in df.columns) else None
         self.index_key = index_key
+        self.use_masks = use_masks
 
         self.bboxes_exist = all(coord in df.columns for coord in (X1_COLUMN, X2_COLUMN, Y1_COLUMN, Y2_COLUMN))
         if self.bboxes_exist:
@@ -145,6 +148,16 @@ class BaseDataset(Dataset):
         img = self.f_imread(img_bytes)
 
         im_h, im_w = img.shape[:2] if isinstance(img, np.ndarray) else img.size[::-1]
+        
+        self.use_masks = True  # TODO: delete
+        mask = None
+        if self.use_masks:
+            img_path = Path(row[PATHS_COLUMN])
+            mask_path = img_path.with_suffix(f".mask{img_path.suffix}")
+            assert mask_path.exists()
+            mask_bytes = self.read_bytes_image(mask_path)
+            mask = self.f_imread(mask_bytes)
+            # TODO: check shape mask == shape image
 
         if (not self.bboxes_exist) or any(
             pd.isna(coord) for coord in [row[X1_COLUMN], row[X2_COLUMN], row[Y1_COLUMN], row[Y2_COLUMN]]
@@ -154,12 +167,34 @@ class BaseDataset(Dataset):
             x1, y1, x2, y2 = int(row[X1_COLUMN]), int(row[Y1_COLUMN]), int(row[X2_COLUMN]), int(row[Y2_COLUMN])
 
         if isinstance(self.transform, albu.Compose):
+            assert mask is None
             img = img[y1:y2, x1:x2, :]  # todo: since albu may handle bboxes we should move it to augs
             image_tensor = self.transform(image=img)["image"]
         else:
             # torchvision.transforms.v2
             img = img.crop((x1, y1, x2, y2))
-            image_tensor = self.transform(img)
+            
+            if mask is not None:
+                mask = mask.crop((x1, y1, x2, y2))
+                assert mask.size == img.size
+
+                mask_tensor = Mask(mask)
+                if mask_tensor.ndim == 3:
+                    assert 1 <= mask_tensor.shape[0] <= 3
+                    mask_tensor = mask_tensor[0]
+                assert mask_tensor.ndim == 2
+
+            if mask is None:
+                image_tensor = self.transform(img)
+            else:
+                bef = mask_tensor.shape
+                image_tensor, mask_tensor = self.transform(img, mask_tensor)
+                # assert mask_tensor.ndim == 2
+                # assert image_tensor.shape[1:] == mask_tensor.shape
+                # image_tensor = torch.cat((image_tensor, mask_tensor.unsqueeze(0)), dim=0)
+
+                print("before", bef, "after", mask_tensor.shape)
+                5/0
 
         item = {
             self.input_tensors_key: image_tensor,
